@@ -1,0 +1,120 @@
+import cv2
+import numpy as np
+from ultralytics import YOLO
+from norfair import Tracker, Detection
+from supervision.draw.color import ColorPalette
+
+# Enable OpenCV optimizations
+cv2.setUseOptimized(True)
+
+# Define color palette
+color_list = [
+    (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
+    (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0),
+    (0, 0, 128), (128, 128, 0)
+]
+color_palette = ColorPalette(colors=color_list)
+
+# Load YOLO model
+model = YOLO("yolov8n.pt")
+
+# Initialize Norfair tracker
+tracker = Tracker(distance_function="euclidean", distance_threshold=30)
+
+# Load video
+video_path = r"_________"
+cap = cv2.VideoCapture(video_path, cv2.CAP_FFMPEG)  # Faster decoding
+
+# Define frame size
+FRAME_WIDTH = 960  # Medium size frame
+FRAME_HEIGHT = 540
+
+# Define slanted crossing line coordinates
+LINE_START = (200, 100)  # Starting point
+LINE_END = (600, 500)    # Ending point
+line_position = {}  # Tracks last known position of IDs
+crossed_ids = set()  # Stores IDs that have crossed
+people_in = 0   # People moving IN (Left to Right)
+people_out = 0  # People moving OUT (Right to Left)
+
+# Function to check if a point is left or right of the slanting line
+def is_left_of_line(point, start, end):
+    x, y = point
+    x1, y1 = start
+    x2, y2 = end
+    return (x - x1) * (y2 - y1) - (y - y1) * (x2 - x1) > 0
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    # Resize frame to medium size
+    frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+
+    # Perform YOLO detection
+    results = model(frame)[0]
+
+    # Extract detections for 'person' class (class 0)
+    person_detections = [
+        Detection(points=np.array([[(x1 + x2) / 2, (y1 + y2) / 2]]), data=np.array([x1, y1, x2, y2]))
+        for x1, y1, x2, y2, conf, cls in results.boxes.data.cpu().numpy()
+        if int(cls) == 0  # Class 0 is 'person'
+    ]
+
+    # Update tracker
+    tracked_objects = tracker.update(detections=person_detections)
+
+    # Draw slanted crossing line
+    cv2.line(frame, LINE_START, LINE_END, (0, 255, 255), 2)
+
+    # Draw bounding boxes and tracking IDs
+    for obj in tracked_objects:
+        x1, y1, x2, y2 = obj.last_detection.data
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2  # Compute center of bounding box
+
+        color = color_palette.colors[obj.id % len(color_palette.colors)]  # Assign color
+
+        # Draw bounding box
+        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+        cv2.putText(frame, f'ID {obj.id}', (int(x1), int(y1) - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+        # Check if person has crossed the slanted line
+        if obj.id in line_position:
+            prev_position = line_position[obj.id]  # Get previous position
+
+            # Determine current position (left or right)
+            current_position = is_left_of_line((cx, cy), LINE_START, LINE_END)
+
+            if obj.id not in crossed_ids:
+                # If moving from Left to Right (IN)
+                if prev_position and not current_position:
+                    people_in += 1
+                    crossed_ids.add(obj.id)
+                    print(f"Person {obj.id} moved IN (Left to Right)!")
+
+                # If moving from Right to Left (OUT)
+                elif not prev_position and current_position:
+                    people_out += 1
+                    crossed_ids.add(obj.id)
+                    print(f"Person {obj.id} moved OUT (Right to Left)!")
+
+        # Update last known position
+        line_position[obj.id] = is_left_of_line((cx, cy), LINE_START, LINE_END)
+
+    # Display people count
+    cv2.putText(frame, f'IN: {people_in}', (20, 50),  
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)  
+    cv2.putText(frame, f'OUT: {people_out}', (20, 90),  
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)  
+
+    # Show the frame
+    cv2.imshow("People Count", frame)
+
+    # Exit on 'q' press
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
