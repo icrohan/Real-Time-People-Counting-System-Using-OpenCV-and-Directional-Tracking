@@ -4,6 +4,7 @@
 
 A real-time, vision-based analytics system that detects, tracks, and counts people moving **in** and **out** of an enclosed space using advanced computer vision techniques. Built using **Python**, **OpenCV**, and a direction-aware algorithm, this project bridges the gap between AI-powered video surveillance and smart occupancy management.
 ---
+"C:\Users\icroh\OneDrive\Pictures\people counting.mp4"
 
 ## 🚀 Project Highlights
 
